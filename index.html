@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>City Rush — Open World</title>
+
+<link rel="icon" href="logo.png">
+
+<style>
+*{box-sizing:border-box}
+html,body{
+    margin:0;
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#111;
+    font-family:Arial,sans-serif;
+    user-select:none;
+}
+
+canvas{
+    display:block;
+    background:#5d9b55;
+}
+
+#hud{
+    position:fixed;
+    top:12px;
+    left:12px;
+    z-index:5;
+    color:white;
+    text-shadow:2px 2px 3px #000;
+    font-size:16px;
+    line-height:1.7;
+}
+
+#mission{
+    position:fixed;
+    top:12px;
+    left:50%;
+    transform:translateX(-50%);
+    z-index:5;
+    color:white;
+    background:rgba(0,0,0,.55);
+    padding:8px 15px;
+    border-radius:10px;
+    text-align:center;
+    min-width:250px;
+}
+
+#message{
+    position:fixed;
+    bottom:90px;
+    left:50%;
+    transform:translateX(-50%);
+    color:white;
+    background:rgba(0,0,0,.65);
+    padding:9px 15px;
+    border-radius:10px;
+    z-index:6;
+    display:none;
+}
+
+#help{
+    position:fixed;
+    bottom:10px;
+    left:10px;
+    color:white;
+    background:rgba(0,0,0,.55);
+    padding:7px 10px;
+    border-radius:8px;
+    z-index:5;
+    font-size:13px;
+}
+
+#mobile{
+    display:none;
+    position:fixed;
+    inset:0;
+    z-index:10;
+    pointer-events:none;
+}
+
+.btn{
+    position:absolute;
+    width:58px;
+    height:58px;
+    border-radius:50%;
+    border:2px solid rgba(255,255,255,.5);
+    background:rgba(0,0,0,.45);
+    color:white;
+    font-size:22px;
+    pointer-events:auto;
+}
+
+#up{left:72px;bottom:125px}
+#down{left:72px;bottom:15px}
+#left{left:10px;bottom:70px}
+#right{left:134px;bottom:70px}
+
+#action{
+    right:25px;
+    bottom:80px;
+    width:75px;
+    height:75px;
+    background:rgba(200,40,40,.65);
+}
+
+#enter{
+    right:110px;
+    bottom:25px;
+}
+
+@media(max-width:800px){
+    #mobile{display:block}
+    #help{display:none}
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud">
+    ❤️ Health: <span id="health">100</span><br>
+    💰 Money: $<span id="money">0</span><br>
+    ⭐ Wanted: <span id="wanted">☆☆☆☆☆</span><br>
+    🚗 Vehicle: <span id="vehicle">None</span>
+</div>
+
+<div id="mission">
+    🎯 Mission: Reach the blue marker
+</div>
+
+<div id="message"></div>
+
+<div id="help">
+    WASD / Arrow Keys = Move &nbsp; | &nbsp;
+    E = Enter/Exit Car &nbsp; | &nbsp;
+    SPACE = Action
+</div>
+
+<div id="mobile">
+    <button class="btn" id="up">▲</button>
+    <button class="btn" id="down">▼</button>
+    <button class="btn" id="left">◀</button>
+    <button class="btn" id="right">▶</button>
+    <button class="btn" id="action">●</button>
+    <button class="btn" id="enter">E</button>
+</div>
+
+<script>
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+function resize(){
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+}
+resize();
+addEventListener("resize",resize);
+
+/* =========================
+   WORLD
+========================= */
+
+const world = {
+    width:3200,
+    height:2400
+};
+
+let camera={
+    x:0,
+    y:0
+};
+
+let keys={};
+
+addEventListener("keydown",e=>{
+    keys[e.key.toLowerCase()]=true;
+
+    if(e.key.toLowerCase()==="e"){
+        enterExitCar();
+    }
+
+    if(e.code==="Space"){
+        action();
+    }
+});
+
+addEventListener("keyup",e=>{
+    keys[e.key.toLowerCase()]=false;
+});
+
+/* =========================
+   PLAYER
+========================= */
+
+const player={
+    x:500,
+    y:500,
+    r:14,
+    speed:3,
+    health:100,
+    money:0,
+    wanted:0,
+    inCar:null,
+    cooldown:0
+};
+
+/* =========================
+   ROADS
+========================= */
+
+const roads=[
+    {x:0,y:380,w:3200,h:130},
+    {x:0,y:1100,w:3200,h:130},
+    {x:0,y:1820,w:3200,h:130},
+
+    {x:350,y:0,w:130,h:2400},
+    {x:1050,y:0,w:130,h:2400},
+    {x:1750,y:0,w:130,h:2400},
+    {x:2450,y:0,w:130,h:2400}
+];
+
+/* =========================
+   BUILDINGS
+========================= */
+
+const buildings=[];
+
+function createBuildings(){
+
+    for(let x=40;x<3100;x+=230){
+
+        for(let y=40;y<2300;y+=230){
+
+            const nearRoad =
+                roads.some(r =>
+                    x+180>r.x &&
+                    x<r.x+r.w &&
+                    y+180>r.y &&
+                    y<r.y+r.h
+                );
+
+            if(!nearRoad){
+
+                buildings.push({
+                    x:x,
+                    y:y,
+                    w:170,
+                    h:170,
+                    color:[
+                        "#777",
+                        "#9b7653",
+                        "#697586",
+                        "#8c8c8c",
+                        "#665f73"
+                    ][Math.floor(Math.random()*5)]
+                });
+
+            }
+        }
+    }
+}
+
+createBuildings();
+
+/* =========================
+   CARS
+========================= */
+
+const cars=[];
+
+function randomRoad(){
+
+    if(Math.random()<.5){
+
+        return {
+            x:Math.random()*world.width,
+            y:Math.random()<.5?440:1160,
+            dir:Math.random()<.5?1:-1,
+            vertical:false
+        };
+
+    }else{
+
+        return {
+            x:Math.random()<.5?410:1110,
+            y:Math.random()*world.height,
+            dir:Math.random()<.5?1:-1,
+            vertical:true
+        };
+    }
+}
+
+for(let i=0;i<35;i++){
+
+    const r=randomRoad();
+
+    cars.push({
+        x:r.x,
+        y:r.y,
+        w:38,
+        h:22,
+        speed:1.5+Math.random()*2,
+        dir:r.dir,
+        vertical:r.vertical,
+        color:[
+            "#e74c3c",
+            "#3498db",
+            "#f1c40f",
+            "#2ecc71",
+            "#9b59b6",
+            "#ecf0f1",
+            "#222"
+        ][Math.floor(Math.random()*7)],
+        npc:true
+    });
+}
+
+/* =========================
+   MONEY
+========================= */
+
+const coins=[];
+
+for(let i=0;i<35;i++){
+
+    coins.push({
+        x:100+Math.random()*3000,
+        y:100+Math.random()*2200,
+        taken:false
+    });
+}
+
+/* =========================
+   MISSION
+========================= */
+
+let mission={
+    x:2700,
+    y:1950,
+    completed:false
+};
+
+/* =========================
+   POLICE
+========================= */
+
+const police=[];
+
+/* =========================
+   DRAW WORLD
+========================= */
+
+function drawWorld(){
+
+    ctx.fillStyle="#63a35c";
+    ctx.fillRect(0,0,world.width,world.height);
+
+    // roads
+    roads.forEach(r=>{
+
+        ctx.fillStyle="#3d4145";
+        ctx.fillRect(r.x,r.y,r.w,r.h);
+
+        ctx.strokeStyle="#d6c65c";
+        ctx.lineWidth=3;
+        ctx.setLineDash([25,25]);
+
+        if(r.w>r.h){
+
+            ctx.beginPath();
+            ctx.moveTo(r.x,r.y+r.h/2);
+            ctx.lineTo(r.x+r.w,r.y+r.h/2);
+            ctx.stroke();
+
+        }else{
+
+            ctx.beginPath();
+            ctx.moveTo(r.x+r.w/2,r.y);
+            ctx.lineTo(r.x+r.w/2,r.y+r.h);
+            ctx.stroke();
+
+        }
+
+        ctx.setLineDash([]);
+    });
+
+    // buildings
+    buildings.forEach(b=>{
+
+        ctx.fillStyle="#222";
+        ctx.fillRect(b.x+7,b.y+8,b.w,b.h);
+
+        ctx.fillStyle=b.color;
+        ctx.fillRect(b.x,b.y,b.w,b.h);
+
+        // windows
+        ctx.fillStyle="#d9e6a1";
+
+        for(let wx=b.x+18;wx<b.x+b.w-15;wx+=35){
+
+            for(let wy=b.y+18;wy<b.y+b.h-15;wy+=35){
+
+                ctx.fillRect(wx,wy,12,15);
+
+            }
+        }
+    });
+}
+
+/* =========================
+   DRAW CAR
+========================= */
+
+function drawCar(car){
+
+    ctx.save();
+
+    ctx.translate(car.x,car.y);
+
+    if(car.vertical)
+        ctx.rotate(Math.PI/2);
+
+    ctx.fillStyle="rgba(0,0,0,.3)";
+    ctx.fillRect(-20, -9, 40, 22);
+
+    ctx.fillStyle=car.color;
+    ctx.fillRect(-19,-10,38,20);
+
+    ctx.fillStyle="#9bd4e8";
+    ctx.fillRect(-8,-8,16,7);
+
+    ctx.fillStyle="#111";
+    ctx.fillRect(-15,8,8,5);
+    ctx.fillRect(7,8,8,5);
+
+    ctx.restore();
+}
+
+/* =========================
+   DRAW PLAYER
+========================= */
+
+function drawPlayer(){
+
+    ctx.save();
+
+    ctx.translate(player.x,player.y);
+
+    ctx.fillStyle="#222";
+    ctx.beginPath();
+    ctx.arc(0,2,13,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle="#f1c27d";
+    ctx.beginPath();
+    ctx.arc(0,-9,7,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle="#3498db";
+    ctx.fillRect(-9,-2,18,16);
+
+    ctx.restore();
+}
+
+/* =========================
+   COINS
+========================= */
+
+function drawCoins(){
+
+    coins.forEach(c=>{
+
+        if(c.taken)return;
+
+        ctx.fillStyle="#ffd700";
+        ctx.beginPath();
+        ctx.arc(c.x,c.y,8,0,Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle="#fff2a8";
+        ctx.beginPath();
+        ctx.arc(c.x-2,c.y-2,3,0,Math.PI*2);
+        ctx.fill();
+    });
+}
+
+/* =========================
+   MISSION MARKER
+========================= */
+
+function drawMission(){
+
+    if(mission.completed)return;
+
+    const pulse=10+Math.sin(Date.now()/200)*4;
+
+    ctx.strokeStyle="#00aaff";
+    ctx.lineWidth=4;
+
+    ctx.beginPath();
+    ctx.arc(mission.x,mission.y,25+pulse,0,Math.PI*2);
+    ctx.stroke();
+
+    ctx.fillStyle="#00aaff";
+    ctx.beginPath();
+    ctx.arc(mission.x,mission.y,7,0,Math.PI*2);
+    ctx.fill();
+}
+
+/* =========================
+   PLAYER MOVEMENT
+========================= */
+
+function movePlayer(){
+
+    if(player.inCar){
+
+        const car=player.inCar;
+
+        if(keys["w"]||keys["arrowup"])
+            car.speed=Math.min(car.speed+0.08,7);
+
+        if(keys["s"]||keys["arrowdown"])
+            car.speed=Math.max(car.speed-0.12,-3);
+
+        if(!keys["w"]&&!keys["s"]&&
+           !keys["arrowup"]&&!keys["arrowdown"]){
+
+            car.speed*=.97;
+        }
+
+        if(keys["a"]||keys["arrowleft"])
+            car.dir-=0.045;
+
+        if(keys["d"]||keys["arrowright"])
+            car.dir+=0.045;
+
+        car.x+=Math.cos(car.dir)*car.speed;
+        car.y+=Math.sin(car.dir)*car.speed;
+
+        car.x=Math.max(20,Math.min(world.width-20,car.x));
+        car.y=Math.max(20,Math.min(world.height-20,car.y));
+
+        player.x=car.x;
+        player.y=car.y;
+
+        return;
+    }
+
+    let dx=0,dy=0;
+
+    if(keys["w"]||keys["arrowup"])dy--;
+    if(keys["s"]||keys["arrowdown"])dy++;
+    if(keys["a"]||keys["arrowleft"])dx--;
+    if(keys["d"]||keys["arrowright"])dx++;
+
+    if(dx||dy){
+
+        const len=Math.hypot(dx,dy);
+
+        player.x+=dx/len*player.speed;
+        player.y+=dy/len*player.speed;
+    }
+
+    player.x=Math.max(15,Math.min(world.width-15,player.x));
+    player.y=Math.max(15,Math.min(world.height-15,player.y));
+}
+
+/* =========================
+   NPC CARS
+========================= */
+
+function updateCars(){
+
+    cars.forEach(car=>{
+
+        if(car===player.inCar)return;
+
+        if(car.vertical){
+
+            car.y+=car.dir*car.speed;
+
+            if(car.y>world.height+50)
+                car.y=-50;
+
+            if(car.y<-50)
+                car.y=world.height+50;
+
+        }else{
+
+            car.x+=car.dir*car.speed;
+
+            if(car.x>world.width+50)
+                car.x=-50;
+
+            if(car.x<-50)
+                car.x=world.width+50;
+        }
+    });
+}
+
+/* =========================
+   ENTER / EXIT
+========================= */
+
+function enterExitCar(){
+
+    if(player.inCar){
+
+        const car=player.inCar;
+
+        player.inCar=null;
+
+        player.x=car.x+35;
+        player.y=car.y;
+
+        showMessage("Exited vehicle");
+
+        return;
+    }
+
+    let nearest=null;
+    let dist=55;
+
+    cars.forEach(car=>{
+
+        const d=Math.hypot(
+            player.x-car.x,
+            player.y-car.y
+        );
+
+        if(d<dist){
+
+            dist=d;
+            nearest=car;
+        }
+    });
+
+    if(nearest){
+
+        player.inCar=nearest;
+
+        // Convert direction to radians if NPC car
+        if(typeof nearest.dir==="number" && nearest.vertical!==undefined){
+
+            nearest.dir=nearest.vertical
+                ? Math.PI/2*nearest.dir
+                : nearest.dir>0?0:Math.PI;
+        }
+
+        nearest.vertical=false;
+
+        showMessage("Vehicle entered 🚗");
+    }
+}
+
+/* =========================
+   MONEY COLLECTION
+========================= */
+
+function collectMoney(){
+
+    coins.forEach(c=>{
+
+        if(c.taken)return;
+
+        if(Math.hypot(player.x-c.x,player.y-c.y)<25){
+
+            c.taken=true;
+            player.money+=100;
+
+            showMessage("+$100 💰");
+        }
+    });
+}
+
+/* =========================
+   ACTION
+========================= */
+
+function action(){
+
+    if(player.cooldown>0)return;
+
+    player.cooldown=20;
+
+    // Complete mission
+    if(!mission.completed){
+
+        const d=Math.hypot(
+            player.x-mission.x,
+            player.y-mission.y
+        );
+
+        if(d<60){
+
+            mission.completed=true;
+            player.money+=1000;
+
+            showMessage("MISSION COMPLETE! +$1000 🎉");
+        }
+    }
+
+    // Increase wanted level
+    if(player.inCar){
+
+        player.wanted=Math.min(5,player.wanted+1);
+
+        showMessage("Police alerted! ⭐");
+        spawnPolice();
+    }
+}
+
+/* =========================
+   POLICE
+========================= */
+
+function spawnPolice(){
+
+    if(police.length>=player.wanted*2)return;
+
+    police.push({
+        x:player.x+300,
+        y:player.y+300,
+        speed:2.2,
+        health:100
+    });
+}
+
+function updatePolice(){
+
+    police.forEach(p=>{
+
+        const dx=player.x-p.x;
+        const dy=player.y-p.y;
+
+        const d=Math.hypot(dx,dy);
+
+        if(d>1){
+
+            p.x+=dx/d*p.speed;
+            p.y+=dy/d*p.speed;
+        }
+
+        if(d<30){
+
+            player.health-=0.15;
+
+        }
+    });
+
+    if(player.wanted>0 &&
+       Math.random()<0.0007){
+
+        player.wanted--;
+
+        if(police.length)
+            police.pop();
+    }
+}
+
+function drawPolice(){
+
+    police.forEach(p=>{
+
+        ctx.fillStyle="#164caa";
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,14,0,Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle="#fff";
+        ctx.fillRect(p.x-7,p.y-4,14,5);
+    });
+}
+
+/* =========================
+   COLLISIONS
+========================= */
+
+function collisions(){
+
+    buildings.forEach(b=>{
+
+        const inside =
+            player.x>b.x-10 &&
+            player.x<b.x+b.w+10 &&
+            player.y>b.y-10 &&
+            player.y<b.y+b.h+10;
+
+        if(inside){
+
+            if(player.inCar){
+
+                player.inCar.x-=Math.cos(player.inCar.dir)*player.inCar.speed;
+                player.inCar.y-=Math.sin(player.inCar.dir)*player.inCar.speed;
+
+            }else{
+
+                player.x-=1;
+                player.y-=1;
+            }
+        }
+    });
+}
+
+/* =========================
+   MINIMAP
+========================= */
+
+function drawMinimap(){
+
+    const size=150;
+    const x=canvas.width-size-15;
+    const y=15;
+
+    ctx.save();
+
+    ctx.fillStyle="rgba(0,0,0,.7)";
+    ctx.fillRect(x,y,size,size);
+
+    ctx.fillStyle="#555";
+
+    roads.forEach(r=>{
+
+        ctx.fillRect(
+            x+r.x/world.width*size,
+            y+r.y/world.height*size,
+            Math.max(2,r.w/world.width*size),
+            Math.max(2,r.h/world.height*size)
+        );
+    });
+
+    // mission
+    if(!mission.completed){
+
+        ctx.fillStyle="#00aaff";
+
+        ctx.beginPath();
+        ctx.arc(
+            x+mission.x/world.width*size,
+            y+mission.y/world.height*size,
+            4,0,Math.PI*2
+        );
+        ctx.fill();
+    }
+
+    // player
+    ctx.fillStyle="#00ff66";
+
+    ctx.beginPath();
+    ctx.arc(
+        x+player.x/world.width*size,
+        y+player.y/world.height*size,
+        4,0,Math.PI*2
+    );
+    ctx.fill();
+
+    ctx.restore();
+}
+
+/* =========================
+   HUD
+========================= */
+
+function updateHUD(){
+
+    document.getElementById("health").innerText=
+        Math.max(0,Math.floor(player.health));
+
+    document.getElementById("money").innerText=
+        player.money;
+
+    document.getElementById("wanted").innerText=
+        "★".repeat(player.wanted)+
+        "☆".repeat(5-player.wanted);
+
+    document.getElementById("vehicle").innerText=
+        player.inCar?"Driving":"None";
+
+    document.getElementById("mission").innerText=
+        mission.completed
+        ?"✅ Mission Complete! Explore the city."
+        :"🎯 Mission: Reach the blue marker";
+}
+
+/* =========================
+   MESSAGE
+========================= */
+
+let messageTimer=0;
+
+function showMessage(text){
+
+    const el=document.getElementById("message");
+
+    el.innerText=text;
+    el.style.display="block";
+
+    messageTimer=120;
+}
+
+/* =========================
+   GAME OVER
+========================= */
+
+function gameOver(){
+
+    ctx.fillStyle="rgba(0,0,0,.8)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.fillStyle="white";
+    ctx.textAlign="center";
+
+    ctx.font="bold 50px Arial";
+    ctx.fillText(
+        "GAME OVER",
+        canvas.width/2,
+        canvas.height/2
+    );
+
+    ctx.font="20px Arial";
+
+    ctx.fillText(
+        "Refresh the page to play again",
+        canvas.width/2,
+        canvas.height/2+45
+    );
+}
+
+/* =========================
+   MAIN LOOP
+========================= */
+
+function loop(){
+
+    if(player.health<=0){
+
+        gameOver();
+        return;
+    }
+
+    if(player.cooldown>0)
+        player.cooldown--;
+
+    movePlayer();
+    updateCars();
+    updatePolice();
+    collectMoney();
+    collisions();
+
+    camera.x=
+        Math.max(
+            0,
+            Math.min(
+                world.width-canvas.width,
+                player.x-canvas.width/2
+            )
+        );
+
+    camera.y=
+        Math.max(
+            0,
+            Math.min(
+                world.height-canvas.height,
+                player.y-canvas.height/2
+            )
+        );
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    ctx.save();
+
+    ctx.translate(-camera.x,-camera.y);
+
+    drawWorld();
+    drawCoins();
+    drawMission();
+
+    cars.forEach(drawCar);
+
+    drawPolice();
+
+    if(!player.inCar)
+        drawPlayer();
+
+    ctx.restore();
+
+    drawMinimap();
+    updateHUD();
+
+    if(messageTimer>0){
+
+        messageTimer--;
+
+        if(messageTimer===0)
+            document.getElementById("message").style.display="none";
+    }
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+
+/* =========================
+   MOBILE CONTROLS
+========================= */
+
+function hold(button,key){
+
+    const b=document.getElementById(button);
+
+    b.addEventListener("touchstart",e=>{
+        e.preventDefault();
+        keys[key]=true;
+    });
+
+    b.addEventListener("touchend",e=>{
+        e.preventDefault();
+        keys[key]=false;
+    });
+}
+
+hold("up","w");
+hold("down","s");
+hold("left","a");
+hold("right","d");
+
+document.getElementById("action")
+.addEventListener("touchstart",e=>{
+    e.preventDefault();
+    action();
+});
+
+document.getElementById("enter")
+.addEventListener("touchstart",e=>{
+    e.preventDefault();
+    enterExitCar();
+});
+
+</script>
+
+</body>
+</html>
